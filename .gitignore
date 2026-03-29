@@ -6,26 +6,45 @@ __pycache__/
 .venv/
 venv/
 env/
+.python-version
+
+.agents/
+_bmad/
 
 data/
-docker/
+data_converter/dataset/
+outputs/
+wandb/
+logs/
+checkpoints/
+
+docker/*.tar
+docker/*.tar.gz
+docker/*.tgz
 
 *.zip
 *.tar
 *.gz
+*.bz2
+*.xz
+*.7z
+
 *.pt
 *.pth
 *.ckpt
 *.npy
 *.npz
 *.zarr
+*.h5
+*.hdf5
+*.bin
 *.mp4
 *.avi
 
-outputs/
-wandb/
-logs/
-checkpoints/
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
 
 .idea/
 .vscode/

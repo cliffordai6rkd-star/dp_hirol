@@ -76,6 +76,22 @@ def _array_to_python(value):
     return arr.tolist()
 
 
+def _normalize_parquet_compression(compression: Optional[str]) -> Optional[str]:
+    if compression is None:
+        return None
+    normalized = str(compression).strip().lower()
+    return None if normalized in {"", "none"} else normalized
+
+
+def _numpy_batch_to_arrow(batch: np.ndarray, arrow_type: pa.DataType) -> pa.Array:
+    if pa.types.is_fixed_size_list(arrow_type):
+        list_size = arrow_type.list_size
+        reshaped = np.asarray(batch).reshape(-1, list_size, *np.asarray(batch).shape[2:])
+        child = _numpy_batch_to_arrow(reshaped.reshape(-1, *reshaped.shape[2:]), arrow_type.value_type)
+        return pa.FixedSizeListArray.from_arrays(child, list_size)
+    return pa.array(np.asarray(batch).reshape(-1), type=arrow_type)
+
+
 def _vector_stats_update(stats: Dict[str, Dict], key: str, array: np.ndarray) -> None:
     arr = np.asarray(array, dtype=np.float64)
     if arr.ndim == 1:
@@ -124,6 +140,8 @@ class CustomLeRobotV3Writer:
         robot_type: str = "unknown",
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         codec: str = "mp4v",
+        image_color_space: str = "rgb",
+        parquet_compression: Optional[str] = None,
     ):
         self.root = _path(root)
         self.fps = int(fps)
@@ -132,6 +150,10 @@ class CustomLeRobotV3Writer:
         self.robot_type = str(robot_type or "unknown")
         self.chunk_size = int(chunk_size)
         self.codec = codec
+        self.image_color_space = str(image_color_space).lower()
+        if self.image_color_space not in {"rgb", "bgr"}:
+            raise ValueError(f"Unsupported image_color_space={image_color_space!r}")
+        self.parquet_compression = _normalize_parquet_compression(parquet_compression)
 
         self.root.mkdir(parents=True, exist_ok=True)
         self.meta_dir = self.root / "meta"
@@ -141,7 +163,6 @@ class CustomLeRobotV3Writer:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.videos_dir.mkdir(parents=True, exist_ok=True)
 
-        self._rows: List[Dict] = []
         self._episode_rows: List[Dict] = []
         self._task_to_index: Dict[str, int] = {}
         self._video_writers: Dict[str, cv2.VideoWriter] = {}
@@ -150,6 +171,12 @@ class CustomLeRobotV3Writer:
         self._current_episode_start = 0
         self._current_episode_length = 0
         self._episode_counter = 0
+        self._total_frames = 0
+        self._data_rel_path = f"data/chunk-{DEFAULT_CHUNK_INDEX:03d}/file-{DEFAULT_FILE_INDEX:03d}.parquet"
+        self._data_path = self.root / self._data_rel_path
+        self._stored_columns = OrderedDict()
+        self._buffer_columns: Dict[str, List[object]] = {}
+        self._data_writer: Optional[pq.ParquetWriter] = None
 
         for video_key in self.video_keys:
             video_path = (
@@ -160,6 +187,21 @@ class CustomLeRobotV3Writer:
             )
             _ensure_parent(video_path)
             self._video_paths[video_key] = video_path
+
+        data_fields = []
+        for feature_name, spec in self.features.items():
+            if spec["dtype"] == "video" and feature_name in self.video_keys:
+                file_key = f"{feature_name}.__video_file__"
+                frame_key = f"{feature_name}.__frame_index__"
+                self._stored_columns[file_key] = {"kind": "video_file"}
+                self._stored_columns[frame_key] = {"kind": "video_frame_index"}
+                data_fields.append(pa.field(file_key, pa.string()))
+                data_fields.append(pa.field(frame_key, pa.int64()))
+                continue
+            self._stored_columns[feature_name] = {"kind": "feature", "spec": spec}
+            data_fields.append(pa.field(feature_name, _feature_to_arrow_type(spec)))
+        self._data_schema = pa.schema(data_fields)
+        self._buffer_columns = {name: [] for name in self._stored_columns}
 
     def _get_video_writer(self, video_key: str, frame_shape: Sequence[int]) -> cv2.VideoWriter:
         writer = self._video_writers.get(video_key)
@@ -188,9 +230,57 @@ class CustomLeRobotV3Writer:
             return np.asarray([False], dtype=np.bool_)
         raise KeyError(f"Missing feature {feature_name!r} in frame payload.")
 
+    def _get_data_writer(self) -> pq.ParquetWriter:
+        writer = self._data_writer
+        if writer is not None:
+            return writer
+        _ensure_parent(self._data_path)
+        writer = pq.ParquetWriter(
+            self._data_path,
+            self._data_schema,
+            compression=self.parquet_compression,
+        )
+        self._data_writer = writer
+        return writer
+
+    def _write_video_frame(self, writer: cv2.VideoWriter, image: np.ndarray) -> None:
+        if self.image_color_space == "bgr":
+            writer.write(image)
+            return
+        writer.write(cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
+
+    def _build_data_table(self, row_count: int) -> pa.Table:
+        arrays = []
+        for name, meta in self._stored_columns.items():
+            field = self._data_schema.field(name)
+            values = self._buffer_columns[name][:row_count]
+            kind = meta["kind"]
+            if kind == "video_file":
+                arrays.append(pa.array(values, type=field.type))
+                continue
+            if kind == "video_frame_index":
+                arrays.append(pa.array(values, type=field.type))
+                continue
+
+            if values:
+                batch = np.stack(values, axis=0)
+                arrays.append(_numpy_batch_to_arrow(batch, field.type))
+            else:
+                arrays.append(pa.array([], type=field.type))
+        return pa.Table.from_arrays(arrays, schema=self._data_schema)
+
+    def _flush_buffer(self, keep_tail: int = 0) -> None:
+        row_count = len(next(iter(self._buffer_columns.values()), []))
+        flush_count = row_count - keep_tail
+        if flush_count <= 0:
+            return
+        table = self._build_data_table(flush_count)
+        self._get_data_writer().write_table(table)
+        for values in self._buffer_columns.values():
+            del values[:flush_count]
+
     def add_frame(self, frame: Mapping[str, object]) -> None:
-        row: Dict[str, object] = {}
-        global_frame_idx = len(self._rows)
+        global_frame_idx = self._total_frames
 
         for feature_name, spec in self.features.items():
             if feature_name in frame:
@@ -203,21 +293,28 @@ class CustomLeRobotV3Writer:
                     raise ValueError(f"Video feature {feature_name!r} must be 3-D, got {image.shape}")
                 if feature_name in self.video_keys:
                     writer = self._get_video_writer(feature_name, image.shape)
-                    writer.write(cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
-                    row[f"{feature_name}.__video_file__"] = str(self._video_paths[feature_name].relative_to(self.root))
-                    row[f"{feature_name}.__frame_index__"] = global_frame_idx
+                    self._write_video_frame(writer, image)
+                    self._buffer_columns[f"{feature_name}.__video_file__"].append(
+                        str(self._video_paths[feature_name].relative_to(self.root))
+                    )
+                    self._buffer_columns[f"{feature_name}.__frame_index__"].append(global_frame_idx)
                 else:
-                    row[feature_name] = _array_to_python(image.astype(np.uint8, copy=False))
+                    image = image.astype(np.uint8, copy=False)
+                    if self.image_color_space == "bgr":
+                        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                    self._buffer_columns[feature_name].append(image)
                 continue
 
             np_dtype = _feature_dtype_to_numpy(spec["dtype"])
             arr = np.asarray(value, dtype=np_dtype)
-            row[feature_name] = _array_to_python(arr)
+            self._buffer_columns[feature_name].append(arr)
             if spec["dtype"].startswith("float") or spec["dtype"].startswith("int"):
-                _vector_stats_update(self._stats_accumulator, feature_name, arr.reshape(1, *arr.shape))
+                _vector_stats_update(self._stats_accumulator, feature_name, arr[None, ...])
 
-        self._rows.append(row)
+        self._total_frames += 1
         self._current_episode_length += 1
+        if len(next(iter(self._buffer_columns.values()), [])) > self.chunk_size:
+            self._flush_buffer(keep_tail=1)
 
     def save_episode(self, task: Optional[str] = None) -> None:
         if self._current_episode_length <= 0:
@@ -228,7 +325,7 @@ class CustomLeRobotV3Writer:
         task_index = self._task_to_index[task_text]
 
         if "next.done" in self.features:
-            self._rows[-1]["next.done"] = [True]
+            self._buffer_columns["next.done"][-1] = np.asarray([True], dtype=np.bool_)
 
         self._episode_rows.append(
             {
@@ -252,6 +349,21 @@ class CustomLeRobotV3Writer:
     def finalize(self) -> None:
         for writer in self._video_writers.values():
             writer.release()
+        self._video_writers.clear()
+
+        self._flush_buffer()
+        if self._data_writer is None:
+            pq.write_table(
+                pa.Table.from_arrays(
+                    [pa.array([], type=field.type) for field in self._data_schema],
+                    schema=self._data_schema,
+                ),
+                self._data_path,
+                compression=self.parquet_compression,
+            )
+        else:
+            self._data_writer.close()
+            self._data_writer = None
 
         features = OrderedDict((key, dict(value)) for key, value in self.features.items())
         for video_key in self.video_keys:
@@ -274,7 +386,7 @@ class CustomLeRobotV3Writer:
             "codebase_version": CODEBASE_VERSION,
             "robot_type": self.robot_type,
             "total_episodes": self._episode_counter,
-            "total_frames": len(self._rows),
+            "total_frames": self._total_frames,
             "total_tasks": len(self._task_to_index),
             "chunks_size": self.chunk_size,
             "data_files_size_in_mb": 100,
@@ -291,39 +403,24 @@ class CustomLeRobotV3Writer:
         with (self.meta_dir / "info.json").open("w", encoding="utf-8") as f:
             json.dump(info, f, indent=2)
 
-        data_fields = []
-        column_data = {}
-        if self._rows:
-            keys = list(self._rows[0].keys())
-        else:
-            keys = []
-        for key in keys:
-            if key.endswith(".__video_file__"):
-                data_fields.append(pa.field(key, pa.string()))
-                column_data[key] = [str(row[key]) for row in self._rows]
-                continue
-            if key.endswith(".__frame_index__"):
-                data_fields.append(pa.field(key, pa.int64()))
-                column_data[key] = [int(row[key]) for row in self._rows]
-                continue
-
-            spec = features[key]
-            data_fields.append(pa.field(key, _feature_to_arrow_type(spec)))
-            column_data[key] = [row[key] for row in self._rows]
-
-        data_table = pa.Table.from_pydict(column_data, schema=pa.schema(data_fields))
-        pq.write_table(data_table, self.root / data_rel_path)
-
         episode_table = pa.Table.from_pylist(self._episode_rows)
         episodes_dir = self.meta_dir / "episodes" / f"chunk-{DEFAULT_CHUNK_INDEX:03d}"
         episodes_dir.mkdir(parents=True, exist_ok=True)
-        pq.write_table(episode_table, self.root / episodes_rel_path)
+        pq.write_table(
+            episode_table,
+            self.root / episodes_rel_path,
+            compression=self.parquet_compression,
+        )
 
         task_rows = [
             {"task_index": task_index, "task": task}
             for task, task_index in sorted(self._task_to_index.items(), key=lambda item: item[1])
         ]
-        pq.write_table(pa.Table.from_pylist(task_rows or [{"task_index": -1, "task": ""}]), self.root / tasks_rel_path)
+        pq.write_table(
+            pa.Table.from_pylist(task_rows or [{"task_index": -1, "task": ""}]),
+            self.root / tasks_rel_path,
+            compression=self.parquet_compression,
+        )
         with (self.meta_dir / "tasks.jsonl").open("w", encoding="utf-8") as f:
             for row in task_rows:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")

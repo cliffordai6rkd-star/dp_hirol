@@ -1,0 +1,32 @@
+name: dp-hirol
+
+services:
+  trainer:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: dp-hirol:train
+    user: "0:0"
+    working_dir: /workspace
+    command: sleep infinity
+    stdin_open: true
+    tty: true
+    ipc: host
+    shm_size: 8gb
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      MUJOCO_GL: osmesa
+      WANDB_DIR: /workspace/wandb
+      MPLCONFIGDIR: /tmp/matplotlib
+      PYTHONPATH: /workspace
+    volumes:
+      - ..:/workspace
+      - ../data:/workspace/data
+      - ../outputs:/workspace/outputs
+      - ../data_converter/dataset:/workspace/data_converter/dataset
