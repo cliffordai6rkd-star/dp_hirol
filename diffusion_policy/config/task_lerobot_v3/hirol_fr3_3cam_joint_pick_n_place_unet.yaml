@@ -1,6 +1,6 @@
 name: hirol_fr3_3cam_joint_pick_n_place_lerobot_v3
 
-image_shape: &image_shape [3, 224, 224]
+image_shape: &image_shape [3, 192, 192]
 shape_meta: &shape_meta
   obs:
     ee_cam_color:
@@ -42,7 +42,7 @@ dataset:
   n_obs_steps: ${dataset_obs_steps}
   n_latency_steps: ${n_latency_steps}
   seed: 42
-  val_ratio: 0.02
+  val_ratio: 0.05
   max_train_episodes: null
   window_sampling_strategy: idx
   image_feature_map:

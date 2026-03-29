@@ -41,9 +41,9 @@ policy:
     rgb_model:
       _target_: diffusion_policy.model.vision.model_getter.get_resnet
       name: resnet18
-      weights: null
+      weights: IMAGENET1K_V1
     resize_shape: null
-    crop_shape: [64, 64]
+    crop_shape: [76, 76]
     random_crop: True
     use_group_norm: True
     share_rgb_model: True
@@ -70,17 +70,19 @@ ema:
 
 dataloader:
   batch_size: 4
-  num_workers: 2
+  num_workers: 6
   shuffle: True
-  pin_memory: False
-  persistent_workers: False
+  pin_memory: True
+  persistent_workers: True
+  prefetch_factor: 2
 
 val_dataloader:
-  batch_size: 2
-  num_workers: 1
+  batch_size: 4
+  num_workers: 4
   shuffle: False
-  pin_memory: False
-  persistent_workers: False
+  pin_memory: True
+  persistent_workers: True
+  prefetch_factor: 2
 
 optimizer:
   _target_: torch.optim.AdamW
@@ -94,15 +96,15 @@ training:
   seed: 42
   debug: False
   resume: True
-  max_ram_gb: 12
+  max_ram_gb: null
   memory_reserve_gb: 2.0
   enforce_process_ram_limit: False
   lr_scheduler: cosine
   lr_warmup_steps: 500
   num_epochs: 1500
-  gradient_accumulate_every: 8
-  use_ema: False
-  freeze_encoder: False
+  gradient_accumulate_every: 4
+  use_ema: True
+  freeze_encoder: True
   rollout_every: 100
   checkpoint_every: 25
   val_every: 5
@@ -122,10 +124,10 @@ logging:
 
 checkpoint:
   topk:
-    monitor_key: train_loss
+    monitor_key: val_loss
     mode: min
     k: 5
-    format_str: 'epoch={epoch:04d}-train_loss={train_loss:.6f}.ckpt'
+    format_str: 'epoch={epoch:04d}-val_loss={val_loss:.6f}.ckpt'
   save_last_ckpt: True
   save_last_snapshot: False
 
