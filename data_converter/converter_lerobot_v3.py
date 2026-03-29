@@ -95,7 +95,8 @@ def _build_feature_spec(image_shape: Sequence[int], camera_keys: Sequence[str]) 
         "observation.state.ee_pose": {"dtype": "float32", "shape": (7,), "names": ee_names},
         "observation.state.joint_position": {"dtype": "float32", "shape": (7,), "names": joint_names},
         "observation.state.gripper_width": {"dtype": "float32", "shape": (1,), "names": ["gripper_width"]},
-        "action": {"dtype": "float32", "shape": (8,), "names": [*joint_names, "gripper_width"]},
+        "action": {"dtype": "float32", "shape": (15,), "names": [*ee_names, *joint_names, "gripper_width"]},
+        "action.ee_pose": {"dtype": "float32", "shape": (7,), "names": ee_names},
         "action.joint_position": {"dtype": "float32", "shape": (7,), "names": joint_names},
         "action.gripper_width": {"dtype": "float32", "shape": (1,), "names": ["gripper_width"]},
     }

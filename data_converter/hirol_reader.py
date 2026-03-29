@@ -502,6 +502,7 @@ class HiROLEpisodeReader:
 
         actions = record.get("actions") or {}
         action_state = actions.get(self._select_role_key(actions) or "", {}) or {}
+        action_ee = _as_float_vector((action_state.get("ee") or {}).get("pose"), 7)
         action_joint = _as_float_vector((action_state.get("joint") or {}).get("position"), 7)
         action_gripper = np.asarray(
             [_action_gripper_to_meters((action_state.get("tool") or {}).get("position", np.nan))],
@@ -517,7 +518,8 @@ class HiROLEpisodeReader:
         frame["observation.state.ee_pose"] = ee_pose.astype(np.float32, copy=False)
         frame["observation.state.joint_position"] = joint_position.astype(np.float32, copy=False)
         frame["observation.state.gripper_width"] = gripper_width
-        frame["action"] = np.concatenate([action_joint, action_gripper], axis=0).astype(np.float32)
+        frame["action"] = np.concatenate([action_ee, action_joint, action_gripper], axis=0).astype(np.float32)
+        frame["action.ee_pose"] = action_ee.astype(np.float32, copy=False)
         frame["action.joint_position"] = action_joint.astype(np.float32, copy=False)
         frame["action.gripper_width"] = action_gripper
         return frame
