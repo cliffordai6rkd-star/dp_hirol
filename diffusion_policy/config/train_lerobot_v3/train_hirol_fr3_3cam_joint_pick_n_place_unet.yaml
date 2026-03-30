@@ -5,7 +5,7 @@ defaults:
 name: train_hirol_dp_fr3_3cam_joint_pick_n_place_unet
 _target_: diffusion_policy.workspace.train_diffusion_unet_image_workspace.TrainDiffusionUnetImageWorkspace
 
-dataset_path: data/hirol_fr3_3cam_joint_pick_n_place_lerobot_v3
+dataset_path: data/pick_n_place/1025-pick_and_place_fr3_295ep_lerobot_v3
 
 task_name: ${task.name}
 shape_meta: ${task.shape_meta}

@@ -2,9 +2,9 @@ name: dp-hirol
 
 services:
   trainer:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
+    # build:
+    #   context: ..
+    #   dockerfile: docker/Dockerfile
     image: dp-hirol:train
     user: "0:0"
     working_dir: /workspace
