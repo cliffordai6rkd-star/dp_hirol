@@ -17,6 +17,7 @@ import collections
 from pprint import pprint
 from omegaconf import OmegaConf
 from ray_exec import worker_fn
+from diffusion_policy.common.config_cli import split_config_reference
 from ray.util.placement_group import (
     placement_group,
 )
@@ -25,7 +26,8 @@ from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
 @click.command()
-@click.option('--config-name', '-cn', required=True, type=str)
+@click.option('--config', '-c', default=None, type=str)
+@click.option('--config-name', '-cn', default=None, type=str)
 @click.option('--config-dir', '-cd', default=None, type=str)
 @click.option('--seeds', '-s', default='42,43,44', type=str)
 @click.option('--monitor_key', '-k', multiple=True, default=['test/mean_score'])
@@ -38,7 +40,7 @@ OmegaConf.register_new_resolver("eval", eval, replace=True)
 @click.option('--unbuffer_python', '-u', is_flag=True, default=False)
 @click.option('--single_node', '-sn', is_flag=True, default=False, help='run all experiments on a single machine')
 @click.argument('command_args', nargs=-1, type=str)
-def main(config_name, config_dir, seeds, monitor_key, ray_address, 
+def main(config, config_name, config_dir, seeds, monitor_key, ray_address, 
     num_cpus, num_gpus, max_retries, monitor_max_retires,
     data_src, unbuffer_python, 
     single_node, command_args):
@@ -49,10 +51,30 @@ def main(config_name, config_dir, seeds, monitor_key, ray_address,
         data_src = os.path.abspath(os.path.expanduser(data_src))
 
     # initialize hydra
+    default_config_path_abs = pathlib.Path(__file__).parent.joinpath(
+        'diffusion_policy', 'config'
+    )
+    default_config_path_rel = str(
+        default_config_path_abs.relative_to(pathlib.Path.cwd())
+    )
+
+    if config is not None:
+        if config_name is not None or config_dir is not None:
+            raise click.UsageError(
+                "Do not combine -c/--config with --config-dir/--config-name."
+            )
+        config_dir, config_name = split_config_reference(
+            config_ref=config,
+            default_config_dir=default_config_path_rel,
+        )
+
+    if config_name is None:
+        raise click.UsageError(
+            "Missing config. Use -c <config-path> or --config-name."
+        )
+
     if config_dir is None:
-        config_path_abs = pathlib.Path(__file__).parent.joinpath(
-            'diffusion_policy','config')
-        config_path_rel = str(config_path_abs.relative_to(pathlib.Path.cwd()))
+        config_path_rel = default_config_path_rel
     else:
         config_path_rel = config_dir
 

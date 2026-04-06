@@ -27,6 +27,6 @@ services:
       PYTHONPATH: /workspace
     volumes:
       - ..:/workspace
-      - ../data:/workspace/data
+      - ../../data:/workspace/data
       - ../outputs:/workspace/outputs
       - ../data_converter/dataset:/workspace/data_converter/dataset

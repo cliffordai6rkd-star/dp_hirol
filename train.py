@@ -2,6 +2,7 @@
 Usage:
 Training:
 python train.py --config-name=train_diffusion_lowdim_workspace
+python train.py -c diffusion_policy/config/train_zarr/train_hirol_fr3_unet_abs_jp.yaml
 
 GPU Selection:
 # Single GPU training - specify device
@@ -41,6 +42,7 @@ import hydra
 from omegaconf import OmegaConf
 import pathlib
 from hydra.core.hydra_config import HydraConfig
+from diffusion_policy.common.config_cli import rewrite_config_reference_argv
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
 
 # allows arbitrary python code execution in configs using the ${eval:''} resolver
@@ -91,4 +93,11 @@ def main(cfg: OmegaConf):
     workspace.run()
 
 if __name__ == "__main__":
+    default_config_dir = pathlib.Path(__file__).parent.joinpath(
+        'diffusion_policy', 'config'
+    )
+    sys.argv = rewrite_config_reference_argv(
+        sys.argv,
+        default_config_dir=str(default_config_dir),
+    )
     main()
