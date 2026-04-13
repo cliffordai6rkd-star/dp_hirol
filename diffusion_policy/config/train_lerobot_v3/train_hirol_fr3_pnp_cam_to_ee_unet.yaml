@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - task_lerobot_v3@task: hirol_fr3_pnp_cam_to_ee_unet
+  - task_lerobot_v3@task: hirol_fr3_pnp_cam_ee_joint_to_ee_unet
 
 name: train_hirol_fr3_pnp_cam_ee_joint_to_ee_unet
 _target_: diffusion_policy.workspace.train_diffusion_unet_image_workspace.TrainDiffusionUnetImageWorkspace
@@ -41,7 +41,7 @@ policy:
     rgb_model:
       _target_: diffusion_policy.model.vision.model_getter.get_resnet
       name: resnet18
-      weights: IMAGENET1K_V1
+      weights: null
     resize_shape: null
     crop_shape: [76, 76]
     random_crop: True
@@ -101,7 +101,7 @@ training:
   enforce_process_ram_limit: False
   lr_scheduler: cosine
   lr_warmup_steps: 500
-  num_epochs: 3000
+  num_epochs: 500
   gradient_accumulate_every: 4
   use_ema: True
   freeze_encoder: True

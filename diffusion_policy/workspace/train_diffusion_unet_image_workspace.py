@@ -8,6 +8,7 @@ if __name__ == "__main__":
     os.chdir(ROOT_DIR)
 
 import os
+import json
 import hydra
 import torch
 from omegaconf import OmegaConf
@@ -62,6 +63,37 @@ class TrainDiffusionUnetImageWorkspace(BaseWorkspace):
         # configure training state
         self.global_step = 0
         self.epoch = 0
+
+    def _freeze_obs_encoder(self):
+        self.model.obs_encoder.eval()
+        self.model.obs_encoder.requires_grad_(False)
+
+    def _collect_model_stats(self):
+        policy_total_params = sum(p.numel() for p in self.model.parameters())
+        policy_trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        obs_encoder_total_params = sum(p.numel() for p in self.model.obs_encoder.parameters())
+        obs_encoder_trainable_params = sum(
+            p.numel() for p in self.model.obs_encoder.parameters() if p.requires_grad
+        )
+        diffusion_total_params = sum(p.numel() for p in self.model.model.parameters())
+        diffusion_trainable_params = sum(
+            p.numel() for p in self.model.model.parameters() if p.requires_grad
+        )
+        return {
+            'policy_total_params': int(policy_total_params),
+            'policy_trainable_params': int(policy_trainable_params),
+            'obs_encoder_total_params': int(obs_encoder_total_params),
+            'obs_encoder_trainable_params': int(obs_encoder_trainable_params),
+            'diffusion_total_params': int(diffusion_total_params),
+            'diffusion_trainable_params': int(diffusion_trainable_params),
+        }
+
+    def _save_model_stats(self, model_stats):
+        stats_path = pathlib.Path(self.output_dir).joinpath('model_stats.json')
+        stats_path.parent.mkdir(parents=True, exist_ok=True)
+        with stats_path.open('w', encoding='utf-8') as f:
+            json.dump(model_stats, f, indent=2, sort_keys=True)
+        return stats_path
 
     def run(self):
         cfg = copy.deepcopy(self.cfg)
@@ -166,6 +198,29 @@ class TrainDiffusionUnetImageWorkspace(BaseWorkspace):
             **cfg.checkpoint.topk
         )
 
+        if cfg.training.freeze_encoder:
+            self._freeze_obs_encoder()
+
+        model_stats = self._collect_model_stats()
+        model_stats['freeze_encoder'] = bool(cfg.training.freeze_encoder)
+        stats_path = self._save_model_stats(model_stats)
+        log.info('Saved model stats to %s', stats_path)
+        log.info(
+            'Policy params: total=%s trainable=%s',
+            f"{model_stats['policy_total_params']:,}",
+            f"{model_stats['policy_trainable_params']:,}",
+        )
+        log.info(
+            'Obs encoder params: total=%s trainable=%s',
+            f"{model_stats['obs_encoder_total_params']:,}",
+            f"{model_stats['obs_encoder_trainable_params']:,}",
+        )
+        log.info(
+            'Diffusion params: total=%s trainable=%s',
+            f"{model_stats['diffusion_total_params']:,}",
+            f"{model_stats['diffusion_trainable_params']:,}",
+        )
+
         # device transfer
         device = torch.device(cfg.training.device)
         log.info(f"DEBUG: cfg.training.device = {cfg.training.device}")
@@ -200,8 +255,7 @@ class TrainDiffusionUnetImageWorkspace(BaseWorkspace):
                 step_log = dict()
                 # ========= train for this epoch ==========
                 if cfg.training.freeze_encoder:
-                    self.model.obs_encoder.eval()
-                    self.model.obs_encoder.requires_grad_(False)
+                    self._freeze_obs_encoder()
 
                 train_losses = list()
                 with tqdm.tqdm(train_dataloader, desc=f"Training epoch {self.epoch}",

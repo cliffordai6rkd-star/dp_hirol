@@ -16,7 +16,6 @@ DEFAULT_CAMERAS: Sequence[str] = (
     "right_hand_fisheye_color",
 )
 ROLE_PRIORITY: Sequence[str] = ("single", "left", "right", "head")
-DEFAULT_GRIPPER_OPEN_WIDTH_M = 0.08
 DEFAULT_TIMESTAMP_PRIORITY: Sequence[tuple[str, Optional[str]]] = (
     ("joint_states", None),
     ("ee_states", None),
@@ -83,30 +82,19 @@ def _as_float_vector(value, length: int) -> np.ndarray:
 
 def _as_float_scalar(value) -> np.float32:
     try:
-        return np.float32(value)
+        array = np.asarray(value, dtype=np.float32).reshape(-1)
     except (TypeError, ValueError):
         return np.float32(np.nan)
+    if array.size != 1:
+        return np.float32(np.nan)
+    return np.float32(array[0])
 
 
-def _obs_gripper_to_meters(value) -> np.float32:
-    scalar = _as_float_scalar(value)
-    if not np.isfinite(scalar):
-        return scalar
-    if abs(float(scalar)) > 1.0:
-        return np.float32(float(scalar) / 1000.0)
-    return scalar
+def _as_float_scalar_array(value) -> np.ndarray:
+    return np.asarray([_as_float_scalar(value)], dtype=np.float32)
 
-
-def _action_gripper_to_meters(value) -> np.float32:
-    scalar = _as_float_scalar(value)
-    if not np.isfinite(scalar):
-        return scalar
-    if float(scalar) in (0.0, 1.0):
-        return np.float32(float(scalar) * DEFAULT_GRIPPER_OPEN_WIDTH_M)
-    if abs(float(scalar)) > 1.0:
-        return np.float32(float(scalar) / 1000.0)
-    return scalar
-
+def _action_gripper(value) -> np.float32:
+    return _as_float_scalar(value)
 
 class HiROLEpisodeReader:
     """Read one HIROL episode from `<episode_dir>/data.json` and media files."""
@@ -338,7 +326,7 @@ class HiROLEpisodeReader:
             state = tools.get(role) or {}
             raw_pos = state.get("position", np.nan)
             tool_position[role] = _as_float_scalar(raw_pos)
-            gripper_width[role] = _obs_gripper_to_meters(raw_pos)
+            gripper_width[role] = _as_float_scalar(raw_pos)
             tool_timestamps[role] = float(state.get("time_stamp", np.nan))
 
         actions = record.get("actions") or {}
@@ -360,7 +348,7 @@ class HiROLEpisodeReader:
 
             raw_tool = tool_state.get("position", np.nan)
             action_tool_position[role] = _as_float_scalar(raw_tool)
-            action_gripper_width[role] = _action_gripper_to_meters(raw_tool)
+            action_gripper_width[role] = _action_gripper(raw_tool)
 
             action_joint_timestamps[role] = float(joint_state.get("time_stamp", np.nan))
             action_ee_timestamps[role] = float(ee_state.get("time_stamp", np.nan))
@@ -498,15 +486,14 @@ class HiROLEpisodeReader:
 
         tools = record.get("tools") or {}
         tool_state = tools.get(self._select_role_key(tools) or "", {}) or {}
-        gripper_width = np.asarray([_obs_gripper_to_meters(tool_state.get("position", np.nan))], dtype=np.float32)
+        gripper_width = _as_float_scalar_array(tool_state.get("position", np.nan))
 
         actions = record.get("actions") or {}
         action_state = actions.get(self._select_role_key(actions) or "", {}) or {}
         action_ee = _as_float_vector((action_state.get("ee") or {}).get("pose"), 7)
         action_joint = _as_float_vector((action_state.get("joint") or {}).get("position"), 7)
-        action_gripper = np.asarray(
-            [_action_gripper_to_meters((action_state.get("tool") or {}).get("position", np.nan))],
-            dtype=np.float32,
+        action_gripper = _as_float_scalar_array(
+            _action_gripper((action_state.get("tool") or {}).get("position", np.nan))
         )
 
         primary_timestamp = self.extract_primary_timestamp(record)

@@ -1,0 +1,39 @@
+name: data_rerun
+
+services:
+  data_rerun:
+    # build:
+    #   context: ..
+    #   dockerfile: docker/Dockerfile
+    image: zyx_hirol:v2
+    user: teleophost
+    working_dir: /workspace
+    command: sleep infinity
+    stdin_open: true
+    tty: true
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+       MUJOCO_GL: osmesa
+       WANDB_DIR: /workspace/wandb
+       MPLCONFIGDIR: /tmp/matplotlib
+       PYTHONPATH: /workspace
+       DISPLAY: ${DISPLAY}
+       XAUTHORITY: /root/.Xauthority
+       WINIT_UNIX_BACKEND: x11
+       WGPU_BACKEND: vulkan
+       SDL_VIDEODRIVER: x11
+       SDL_AUDIODRIVER: pulse
+       UDEV: "1"
+    volumes:
+      - ../..:/workspace
+      - ../../../data:/workspace/data
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw # 给容器访问宿主机的X11权限
+      - ${XAUTHORITY:-$HOME/.Xauthority}:/root/.Xauthority:ro
+

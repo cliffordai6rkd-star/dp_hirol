@@ -12,7 +12,6 @@ services:
     stdin_open: true
     tty: true
     ipc: host
-    shm_size: 8gb
     deploy:
       resources:
         reservations:
@@ -21,10 +20,21 @@ services:
               count: all
               capabilities: [gpu]
     environment:
-      MUJOCO_GL: osmesa
-      WANDB_DIR: /workspace/wandb
-      MPLCONFIGDIR: /tmp/matplotlib
-      PYTHONPATH: /workspace
+       MUJOCO_GL: osmesa
+       WANDB_DIR: /workspace/wandb
+       MPLCONFIGDIR: /tmp/matplotlib
+       PYTHONPATH: /workspace
+       DISPLAY: ${DISPLAY}
+       XAUTHORITY: ${XAUTHORITY:-$HOME/.Xauthority}
+      #  HTTP_PROXY: ${HTTP_PROXY:-}
+      #  HTTPS_PROXY: ${HTTPS_PROXY:-}
+      #  NO_PROXY: ${NO_PROXY:-}
+      #  http_proxy: ${http_proxy:-}
+      #  https_proxy: ${https_proxy:-}
+      #  no_proxy: ${no_proxy:-}
+       SDL_VIDEODRIVER: x11
+       SDL_AUDIODRIVER: pulse
+       UDEV: "1"
     volumes:
       - ..:/workspace
       - ../../data:/workspace/data
