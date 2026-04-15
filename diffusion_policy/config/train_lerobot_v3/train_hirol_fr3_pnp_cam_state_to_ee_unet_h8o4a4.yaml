@@ -1,8 +1,8 @@
 defaults:
   - _self_
-  - task_lerobot_v3@task: hirol_fr3_pnp_cam_to_ee_unet
+  - task_lerobot_v3@task: hirol_fr3_pnp_cam_state_to_ee_unet_h8o4a4
 
-name: train_hirol_fr3_pnp_cam_ee_to_ee_unet
+name: train_hirol_fr3_pnp_cam_state_to_ee_unet_h8o4a4
 _target_: diffusion_policy.workspace.train_diffusion_unet_image_workspace.TrainDiffusionUnetImageWorkspace
 
 dataset_path: data/pnp_30_ep/pick_and_place_lerobotv3
@@ -11,9 +11,9 @@ task_name: ${task.name}
 shape_meta: ${task.shape_meta}
 exp_name: ${name}
 
-horizon: 16
-n_obs_steps: 2
-n_action_steps: 8
+horizon: 8
+n_obs_steps: 4
+n_action_steps: 4
 n_latency_steps: 0
 dataset_obs_steps: ${n_obs_steps}
 past_action_visible: False
@@ -41,7 +41,7 @@ policy:
     rgb_model:
       _target_: diffusion_policy.model.vision.model_getter.get_resnet
       name: resnet18
-      weights: null
+      weights: IMAGENET1K_V1
     resize_shape: null
     crop_shape: [76, 76]
     random_crop: True
@@ -105,7 +105,6 @@ training:
   gradient_accumulate_every: 4
   use_ema: True
   freeze_encoder: True
-  rollout_every: 100
   checkpoint_every: 25
   val_every: 5
   sample_every: 20
