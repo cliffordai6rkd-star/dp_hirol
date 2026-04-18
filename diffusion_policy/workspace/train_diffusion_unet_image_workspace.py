@@ -122,7 +122,11 @@ class TrainDiffusionUnetImageWorkspace(BaseWorkspace):
         # configure dataset
         dataset: BaseImageDataset
         dataset_kwargs = dict()
-        if cfg.task.dataset.get("_target_") == "diffusion_policy.dataset.hirol_dataset.HirolDataset":
+        memory_aware_dataset_targets = {
+            "diffusion_policy.dataset.hirol_dataset.HirolDataset",
+            "diffusion_policy.dataset.hirol_lerobot_v3_dataset.HirolLeRobotV3Dataset",
+        }
+        if cfg.task.dataset.get("_target_") in memory_aware_dataset_targets:
             dataset_kwargs["memory_limit_gb"] = max_ram_gb
             dataset_kwargs["memory_reserve_gb"] = memory_reserve_gb
         dataset = hydra.utils.instantiate(cfg.task.dataset, **dataset_kwargs)

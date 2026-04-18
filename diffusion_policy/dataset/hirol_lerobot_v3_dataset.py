@@ -1,13 +1,20 @@
 from typing import Dict, List, Mapping, Optional, Sequence
 
 import copy
+import logging as log
 import os
 
 import cv2
 import numpy as np
 import torch
+from tqdm import tqdm
 
 from diffusion_policy.common.lerobot_v3_io import CustomLeRobotV3Dataset
+from diffusion_policy.common.memory_budget import (
+    compute_effective_budget_bytes,
+    estimate_array_nbytes,
+    format_gb,
+)
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.common.sampler import create_indices, downsample_mask, get_val_mask
 from diffusion_policy.dataset.base_dataset import BaseImageDataset
@@ -96,6 +103,9 @@ class HirolLeRobotV3Dataset(BaseImageDataset):
         timestamp_step_sec: Optional[float] = None,
         timestamp_tolerance_sec: Optional[float] = None,
         local_files_only: bool = True,
+        preload_images: bool = False,
+        memory_limit_gb: Optional[float] = None,
+        memory_reserve_gb: float = 2.0,
     ):
         super().__init__()
         if window_sampling_strategy not in {"idx", "timestamp"}:
@@ -117,6 +127,7 @@ class HirolLeRobotV3Dataset(BaseImageDataset):
         self.timestamp_tolerance_sec = timestamp_tolerance_sec
         self.sequence_length = horizon + n_latency_steps
         self.anchor_position = max(0, min(self.sequence_length - 1, (n_obs_steps or 1) - 1))
+        self.image_data: Dict[str, np.ndarray] = {}
 
         obs_shape_meta = shape_meta["obs"]
         self.rgb_keys = [key for key, attr in obs_shape_meta.items() if attr.get("type") == "rgb"]
@@ -169,6 +180,29 @@ class HirolLeRobotV3Dataset(BaseImageDataset):
                 f"Source fields: {self.action_feature_fields}"
             )
 
+        effective_budget_bytes = compute_effective_budget_bytes(
+            memory_limit_gb=memory_limit_gb,
+            memory_reserve_gb=memory_reserve_gb,
+        )
+        estimated_preload_bytes = self._estimate_image_preload_bytes()
+        if effective_budget_bytes is not None:
+            log.info(
+                "HirolLeRobotV3Dataset RAM budget: effective=%s, estimated image-preload=%s",
+                format_gb(effective_budget_bytes),
+                format_gb(estimated_preload_bytes),
+            )
+            if preload_images and estimated_preload_bytes > effective_budget_bytes:
+                log.warning(
+                    "Disabling LeRobot image preload because estimated footprint %s exceeds RAM budget %s.",
+                    format_gb(estimated_preload_bytes),
+                    format_gb(effective_budget_bytes),
+                )
+                preload_images = False
+
+        if preload_images:
+            self.image_data = self._preload_images()
+            self.lerobot_dataset.close()
+
         val_mask = get_val_mask(
             n_episodes=len(self.episode_ends),
             val_ratio=val_ratio,
@@ -217,6 +251,40 @@ class HirolLeRobotV3Dataset(BaseImageDataset):
         if len(arrays) == 1:
             return arrays[0].astype(dtype, copy=False)
         return np.concatenate(arrays, axis=-1).astype(dtype, copy=False)
+
+    def _estimate_image_preload_bytes(self) -> int:
+        total = 0
+        for key in self.rgb_keys:
+            expected_shape = tuple(self.shape_meta["obs"][key]["shape"])
+            total += self.dataset_length * estimate_array_nbytes(expected_shape, np.float32)
+        return total
+
+    def _preload_images(self) -> Dict[str, np.ndarray]:
+        image_data = {
+            key: np.empty(
+                (self.dataset_length,) + tuple(self.shape_meta["obs"][key]["shape"]),
+                dtype=np.float32,
+            )
+            for key in self.rgb_keys
+        }
+        log.info(
+            "Preloading %d LeRobot frames for %d RGB keys into memory...",
+            self.dataset_length,
+            len(self.rgb_keys),
+        )
+        for frame_idx in tqdm(range(self.dataset_length), desc="Preload LeRobot images"):
+            sample = self.lerobot_dataset[frame_idx]
+            for key in self.rgb_keys:
+                feature_name = self.image_feature_map[key]
+                if feature_name not in sample:
+                    raise KeyError(
+                        f"Feature {feature_name!r} missing from LeRobot sample. "
+                        f"Available keys: {list(sample.keys())}"
+                    )
+                expected_shape = tuple(self.shape_meta["obs"][key]["shape"])
+                image_data[key][frame_idx] = _coerce_image(sample[feature_name], expected_shape)
+        log.info("Finished LeRobot image preload.")
+        return image_data
 
     @staticmethod
     def _build_episode_ends(episode_index: np.ndarray) -> np.ndarray:
@@ -342,20 +410,23 @@ class HirolLeRobotV3Dataset(BaseImageDataset):
         obs_dict = {}
 
         for key in self.rgb_keys:
-            expected_shape = tuple(self.shape_meta["obs"][key]["shape"])
-            feature_name = self.image_feature_map[key]
-            obs_dict[key] = np.stack(
-                [
-                    self._load_frame_feature(
-                        frame_idx=int(frame_idx),
-                        feature_name=feature_name,
-                        expected_shape=expected_shape,
-                        frame_cache=frame_cache,
-                    )
-                    for frame_idx in obs_indices
-                ],
-                axis=0,
-            )
+            if key in self.image_data:
+                obs_dict[key] = self.image_data[key][obs_indices, ...].astype(np.float32, copy=False)
+            else:
+                expected_shape = tuple(self.shape_meta["obs"][key]["shape"])
+                feature_name = self.image_feature_map[key]
+                obs_dict[key] = np.stack(
+                    [
+                        self._load_frame_feature(
+                            frame_idx=int(frame_idx),
+                            feature_name=feature_name,
+                            expected_shape=expected_shape,
+                            frame_cache=frame_cache,
+                        )
+                        for frame_idx in obs_indices
+                    ],
+                    axis=0,
+                )
 
         for key in self.lowdim_keys:
             obs_dict[key] = self.lowdim_data[key][obs_indices, ...].astype(np.float32, copy=False)

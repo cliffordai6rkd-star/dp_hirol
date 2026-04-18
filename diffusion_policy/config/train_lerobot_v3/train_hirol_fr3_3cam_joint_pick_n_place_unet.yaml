@@ -69,16 +69,16 @@ ema:
   max_value: 0.9999
 
 dataloader:
-  batch_size: 4
-  num_workers: 6
+  batch_size: 128
+  num_workers: 8
   shuffle: True
   pin_memory: True
   persistent_workers: True
   prefetch_factor: 2
 
 val_dataloader:
-  batch_size: 4
-  num_workers: 4
+  batch_size: 128
+  num_workers: 8
   shuffle: False
   pin_memory: True
   persistent_workers: True
@@ -106,10 +106,10 @@ training:
   use_ema: True
   freeze_encoder: True
   rollout_every: 100
-  checkpoint_every: 25
+  checkpoint_every: 10
   val_every: 5
   sample_every: 20
-  max_train_steps: 600
+  max_train_steps: 3600
   max_val_steps: 40
   tqdm_interval_sec: 1.0
 

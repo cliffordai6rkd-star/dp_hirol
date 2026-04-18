@@ -88,11 +88,17 @@ class HirolDataset(BaseImageDataset):
             load_into_memory=False,         # 整库存放内存
             preload_images=False,           # 是否预加载图片  还是在训练的时候再加载图片 用于低性能显卡训练
             use_parallel_loading=True,      # 是否并行预处理图片
+            use_cache=None,                 # 兼容 task yaml；true 时等价于整库+图像预载
+            delta_action=None,              # 兼容旧配置，当前数据集不在此处变换 action
             memory_limit_gb=None,           # 内存预算
             memory_reserve_gb=2.0,
         ):
         # 调用父类的初始化  一行直接初始化父类变量
         super().__init__()
+
+        if use_cache:
+            load_into_memory = True
+            preload_images = True
 
         # 将obs分为rgb_keys和lowdim_keys
         obs_shape_meta = shape_meta['obs']
@@ -797,7 +803,12 @@ def _hirol_dataset_initialize_from_replay_buffer(
         max_train_episodes=None,
         preload_images=False,
         use_parallel_loading=True,
+        use_cache=None,
+        delta_action=None,
     ):
+    if use_cache:
+        preload_images = True
+
     self.replay_buffer = replay_buffer
     log.info(f'get {self.replay_buffer.n_episodes} episode data from replay buffer')
 
@@ -924,9 +935,15 @@ def _hirol_dataset_chunk_aware_init(
         load_into_memory=False,
         preload_images=False,
         use_parallel_loading=True,
+        use_cache=None,
+        delta_action=None,
         memory_limit_gb=None,
         memory_reserve_gb=2.0,
     ):
+    if use_cache:
+        load_into_memory = True
+        preload_images = True
+
     if not _hirol_dataset_is_chunked_zarr(dataset_path):
         return _HIROLDATASET_ORIGINAL_INIT(
             self,
@@ -943,6 +960,8 @@ def _hirol_dataset_chunk_aware_init(
             load_into_memory=load_into_memory,
             preload_images=preload_images,
             use_parallel_loading=use_parallel_loading,
+            use_cache=use_cache,
+            delta_action=delta_action,
             memory_limit_gb=memory_limit_gb,
             memory_reserve_gb=memory_reserve_gb,
         )
@@ -981,6 +1000,8 @@ def _hirol_dataset_chunk_aware_init(
         max_train_episodes=max_train_episodes,
         preload_images=preload_images,
         use_parallel_loading=use_parallel_loading,
+        use_cache=use_cache,
+        delta_action=delta_action,
     )
 
 
